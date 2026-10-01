@@ -10,11 +10,14 @@ Fitur utama:
 - pembuatan subtitle otomatis
 - pembuatan hook, caption, dan tagar berdasarkan teks penting
 - generator thumbnail multi-variant untuk setiap klip
+- riwayat proses dan export zip hasil
+- API backend FastAPI untuk workflow otomatisasi dan integrasi eksternal
 - preview dan export hasil ke folder workspace
 
 ## Stack
 - Python 3.11+
 - Streamlit
+- FastAPI
 - MoviePy
 - Pillow
 - FFmpeg
@@ -25,17 +28,45 @@ Fitur utama:
 - Untuk transkripsi otomatis, install `openai-whisper` dari `requirements.txt`.
 
 ## Struktur proyek
-- `app.py` – antarmuka aplikasi
+- `app.py` – antarmuka aplikasi Streamlit
+- `api.py` – backend API FastAPI untuk proses otomatisasi dan integrasi
 - `src/video_pipeline.py` – pipeline utama pemrosesan video, deteksi momen, thumbnail, dan copywriting
 - `uploads/` – penyimpanan file input
-- `workspace/` – hasil output video, transcript, subtitle, thumbnail, dan metadata
+- `workspace/` – hasil output video, transcript, subtitle, thumbnail, metadata, dan riwayat proses
 
 ## Cara menjalankan
+
+Streamlit frontend:
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 streamlit run app.py
+```
+
+API backend:
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn api:app --host 0.0.0.0 --port 8000
+```
+
+## Endpoint API
+
+- `GET /health` – cek status service
+- `POST /process` – upload video dan dapatkan hasil processing
+- `GET /jobs` – daftar history pekerjaan
+- `GET /jobs/{job_id}` – detail job berdasarkan ID
+- `GET /jobs/{job_id}/download` – download hasil pekerjaan dalam format zip
+
+Contoh request:
+```bash
+curl -X POST "http://localhost:8000/process" \
+  -F "file=@video.mp4" \
+  -F "max_clips=3" \
+  -F "clip_duration=30" \
+  -F "target_platform=TikTok"
 ```
 
 ## Flow kerja
@@ -45,6 +76,7 @@ streamlit run app.py
 4. Video dipotong menjadi klip terbaik sesuai jumlah yang diinginkan
 5. Setiap klip dibuat dengan subtitle, hook, caption, tagar, dan thumbnail multi-variant
 6. Hasil file disimpan di folder `workspace`
+7. Riwayat proses serta export zip dapat diakses dari dashboard atau API
 
 ## Catatan
-Versi ini adalah tahap 4 dari pengembangan, fokus pada thumbnail generator serta variasi copywriting agar setiap klip lebih siap dipublikasikan dengan kualitas konten yang lebih kuat.
+Versi ini adalah tahap 6 dari pengembangan, fokus pada workflow otomatisasi yang lebih siap dipakai: frontend UI untuk interaksi manusia, API backend untuk integrasi eksternal, dan sistem kerja yang dapat dipadukan dengan automasi atau produk lain.
