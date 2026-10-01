@@ -1,154 +1,153 @@
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.responses import FileResponse, JSONResponse
 from pathlib import Path
 import io
 import json
-import zipfile
-from datetime import datetime
+from datetime import datetime, timezone
 
-import streamlit as st
-
+from auth import authenticate_user, register_user
+from db import add_job, create_project, get_job_by_id, list_jobs, list_projects
 from src.video_pipeline import VideoPipeline
 
 
-HISTORY_PATH = Path("workspace/history.json")
+app = FastAPI(
+    title="Video Clipper Automation API",
+    description="API untuk memproses video panjang menjadi klip pendek dengan subtitle, hook, caption, tagar, thumbnail, dan export hasil.",
+    version="1.0.0",
+)
+
+UPLOAD_DIR = Path("uploads")
+WORKSPACE_DIR = Path("workspace")
 
 
-def load_history():
-    if not HISTORY_PATH.exists():
-        return []
+class UploadedMemory(io.BytesIO):
+    def __init__(self, data: bytes, filename: str):
+        super().__init__(data)
+        self.name = filename
+
+
+@app.get("/health")
+async def health_check():
+    return {"status": "ok", "service": "video-clipper-automation"}
+
+
+@app.post("/register")
+async def register(username: str = Form(...), password: str = Form(...)):
     try:
-        data = json.loads(HISTORY_PATH.read_text(encoding="utf-8"))
-        if isinstance(data, list):
-            return data
-    except Exception:
-        return []
-    return []
+        user = register_user(username, password)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return {"user": user}
 
 
-def save_history(result: dict, original_name: str):
-    history = load_history()
-    entry = {
-        "job_id": result.get("job_id"),
-        "generated_at": result.get("generated_at") or datetime.utcnow().isoformat() + "Z",
-        "platform": result.get("platform"),
-        "filename": original_name,
-        "clip_count": len(result.get("clips", [])),
-        "workspace": result.get("workspace"),
-        "source_duration": result.get("source_duration"),
-    }
-    history.insert(0, entry)
-    HISTORY_PATH.parent.mkdir(parents=True, exist_ok=True)
-    HISTORY_PATH.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
+@app.post("/login")
+async def login(username: str = Form(...), password: str = Form(...)):
+    user = authenticate_user(username, password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Username atau password salah")
+    return {"user": user}
 
 
-def get_history_jobs():
-    return load_history()
+@app.get("/projects")
+async def get_projects(username: str, password: str):
+    user = authenticate_user(username, password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Username atau password salah")
+    return JSONResponse(content=list_projects(user["id"]))
 
 
-def export_job_zip(job_dir: str) -> bytes:
-    directory = Path(job_dir)
-    buffer = io.BytesIO()
-    with zipfile.ZipFile(buffer, "w", zipfile.ZIP_DEFLATED) as zf:
-        for file in sorted(directory.rglob("*")):
-            if file.is_file():
-                zf.write(file, arcname=file.relative_to(directory.parent))
-    return buffer.getvalue()
+@app.post("/projects")
+async def create_project_route(name: str = Form(...), username: str = Form(...), password: str = Form(...)):
+    user = authenticate_user(username, password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Username atau password salah")
+    project_id = create_project(user["id"], name)
+    return {"id": project_id, "name": name, "user_id": user["id"]}
 
 
-st.set_page_config(page_title="Video Clipper Automation", layout="wide")
+@app.post("/process")
+async def process_video(
+    file: UploadFile = File(...),
+    username: str = Form(...),
+    password: str = Form(...),
+    project_id: int | None = Form(None),
+    max_clips: int = Form(3),
+    clip_duration: int = Form(30),
+    target_platform: str = Form("TikTok"),
+):
+    user = authenticate_user(username, password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Username atau password salah")
 
-st.title("🎬 Video Clipper Automation")
-st.caption("Upload video panjang, pilih momen terpenting, lalu hasilkan klip dengan hook, subtitle, caption, tagar, dan thumbnail siap publish.")
+    if not file.filename:
+        raise HTTPException(status_code=400, detail="Nama file tidak valid")
 
-with st.sidebar:
-    st.header("Pengaturan otomatis")
-    max_clips = st.slider("Jumlah klip", min_value=1, max_value=10, value=3)
-    clip_duration = st.slider("Durasi target per klip (detik)", min_value=10, max_value=120, value=30)
-    target_platform = st.selectbox("Platform target", ["TikTok", "Reels", "Shorts", "YouTube", "LinkedIn"])
+    contents = await file.read()
+    uploaded = UploadedMemory(contents, file.filename)
 
-    history = get_history_jobs()
-    if history:
-        st.subheader("Riwayat proses")
-        history_labels = [f"{item['generated_at']} | {item['filename']}" for item in history]
-        selected_history = st.selectbox("Pilih history", options=history_labels, index=0)
-        selected_entry = next((item for item in history if f"{item['generated_at']} | {item['filename']}" == selected_history), None)
-        if selected_entry:
-            st.write(f"Platform: {selected_entry.get('platform')}")
-            st.write(f"Klip: {selected_entry.get('clip_count')}")
-            st.write(f"Workspace: {selected_entry.get('workspace')}")
-            if selected_entry.get("workspace"):
-                zip_bytes = export_job_zip(selected_entry["workspace"])
-                st.download_button(
-                    label="Download zip hasil",
-                    data=zip_bytes,
-                    file_name=f"{selected_entry['job_id']}_export.zip",
-                    mime="application/zip",
-                )
+    pipeline = VideoPipeline(
+        upload_dir=UPLOAD_DIR,
+        workspace_dir=WORKSPACE_DIR,
+        max_clips=max_clips,
+        clip_duration=clip_duration,
+        target_platform=target_platform,
+    )
+    result = pipeline.process(uploaded)
 
-uploaded_file = st.file_uploader("Upload video panjang", type=["mp4", "mov", "mkv", "avi", "webm"])
-
-if uploaded_file is not None:
-    with st.spinner("Menganalisis momen paling kuat, membuat klip, subtitle, thumbnail, dan variasi copywriting..."):
-        pipeline = VideoPipeline(
-            upload_dir=Path("uploads"),
-            workspace_dir=Path("workspace"),
-            max_clips=max_clips,
-            clip_duration=clip_duration,
-            target_platform=target_platform,
-        )
-        result = pipeline.process(uploaded_file)
-        save_history(result, uploaded_file.name)
-
-    st.success(f"Selesai: {len(result['clips'])} klip paling menarik berhasil dibuat untuk {result['platform']}.")
-
-    zip_bytes = export_job_zip(result["workspace"])
-    st.download_button(
-        label="Download seluruh hasil zip",
-        data=zip_bytes,
-        file_name=f"{result['job_id']}_export.zip",
-        mime="application/zip",
+    add_job(
+        user_id=user["id"],
+        project_id=project_id,
+        job_id=result.get("job_id"),
+        filename=file.filename,
+        platform=result.get("platform"),
+        clip_count=len(result.get("clips", [])),
+        source_duration=result.get("source_duration"),
+        workspace=result.get("workspace"),
     )
 
-    if result.get("transcript"):
-        with st.expander("Lihat transkrip keseluruhan"):
-            st.code(result["transcript"], language="text")
+    return JSONResponse(content=result)
 
-    if result.get("hotspot_analysis"):
-        with st.expander("Lihat analisis momen penting"):
-            st.json(result["hotspot_analysis"])
 
-    for clip in result["clips"]:
-        st.markdown(f"---\n### {clip['title']}\n")
-        col1, col2 = st.columns([1.6, 1])
+@app.get("/jobs")
+async def list_user_jobs(username: str, password: str, project_id: int | None = None):
+    user = authenticate_user(username, password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Username atau password salah")
+    return JSONResponse(content=list_jobs(user["id"], project_id))
 
-        with col1:
-            st.video(clip["path"])
-        with col2:
-            st.image(clip["thumbnail"], caption="Thumbnail utama")
-            st.write(f"Durasi: {clip['duration']} detik")
-            st.write(f"Skor momen: {clip['moment_score']}")
-            st.write("Hook options:")
-            for option in clip["hook_variants"]:
-                st.code(option, language="text")
-            st.write("Caption options:")
-            for option in clip["caption_variants"]:
-                st.code(option, language="text")
-            st.write(f"Tagar: {', '.join(clip['tags'])}")
 
-        st.write("Thumbnail variants:")
-        thumb_cols = st.columns(len(clip["thumbnail_variants"]))
-        for i, thumb in enumerate(clip["thumbnail_variants"]):
-            with thumb_cols[i]:
-                st.image(thumb, caption=f"Variant {i + 1}")
+@app.get("/jobs/{job_id}")
+async def get_job(job_id: str, username: str, password: str):
+    user = authenticate_user(username, password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Username atau password salah")
+    row = get_job_by_id(user["id"], job_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Job tidak ditemukan")
+    workspace = Path(row["workspace"])
+    metadata_path = workspace / "metadata.json"
+    if not metadata_path.exists():
+        raise HTTPException(status_code=404, detail="Metadata job tidak ditemukan")
+    metadata = json.loads(metadata_path.read_text(encoding="utf-8"))
+    return JSONResponse(content=metadata)
 
-    with st.expander("Lihat metadata lengkap"):
-        st.json({k: v for k, v in result.items() if k != "clips"})
 
-    with st.expander("Lihat semua file hasil"):
-        for file in sorted(Path(result["workspace"]).rglob("*")):
-            if file.is_file():
-                st.write(file.relative_to(Path(result["workspace"])))
-else:
-    st.info("Silakan upload video panjang untuk memulai proses clipping otomatis.")
-
-st.markdown("---")
-st.caption("Versi tahap 5: history proses dan export hasil batch untuk workflow yang lebih rapi dan siap dipakai.")
+@app.get("/jobs/{job_id}/download")
+async def download_job(job_id: str, username: str, password: str):
+    user = authenticate_user(username, password)
+    if not user:
+        raise HTTPException(status_code=401, detail="Username atau password salah")
+    row = get_job_by_id(user["id"], job_id)
+    if not row:
+        raise HTTPException(status_code=404, detail="Job tidak ditemukan")
+    job_dir = Path(row["workspace"])
+    if not job_dir.exists():
+        raise HTTPException(status_code=404, detail="Job tidak ditemukan")
+    zip_path = job_dir.parent / f"{job_id}_export.zip"
+    if not zip_path.exists():
+        import zipfile
+        with zipfile.ZipFile(zip_path, "w", zipfile.ZIP_DEFLATED) as zf:
+            for file in sorted(job_dir.rglob("*")):
+                if file.is_file():
+                    zf.write(file, arcname=file.relative_to(job_dir.parent))
+    return FileResponse(zip_path, media_type="application/zip", filename=f"{job_id}_export.zip")
