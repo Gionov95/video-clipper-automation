@@ -1,5 +1,42 @@
-streamlit>=1.35.0
-moviepy>=1.0.3
-pydub>=0.25.1
-python-dotenv>=1.0.0
-openai-whisper>=20231117
+# Video Clipper Automation
+
+Aplikasi otomatis untuk memotong video panjang menjadi beberapa klip singkat siap dipublish di platform seperti TikTok, Reels, Shorts, YouTube, dan LinkedIn.
+
+Fitur utama:
+- upload video panjang
+- pemotongan otomatis menjadi beberapa klip
+- pembuatan subtitle otomatis
+- pembuatan hook, caption, dan tagar
+- thumbnail preview untuk setiap klip
+- export hasil ke folder workspace
+
+## Stack
+- Python 3.11+
+- Streamlit
+- MoviePy
+- FFmpeg
+
+## Struktur proyek
+- `app.py` – antarmuka aplikasi
+- `src/video_pipeline.py` – pipeline utama pemrosesan video
+- `uploads/` – penyimpanan file input
+- `workspace/` – hasil output video, subtitle, thumbnail, dan metadata
+
+## Cara menjalankan
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+streamlit run app.py
+```
+
+## Flow kerja
+1. Upload video panjang
+2. Aplikasi membagi video menjadi beberapa bagian sesuai jumlah klip yang dipilih
+3. Setiap klip dibuat sebagai file video baru dengan subtitle dan thumbnail
+4. Metadata seperti hook, caption, dan tagar dibuat otomatis
+5. Hasil tersimpan di folder `workspace`
+
+## Catatan
+Versi ini adalah MVP yang fokus pada otomatisasi dasar repurposing video. Untuk skenario yang lebih canggih, dapat dikembangkan dengan transkripsi AI, deteksi momen penting berbasis audio/visual, dan integrasi model generative untuk thumbnail serta copywriting.
+

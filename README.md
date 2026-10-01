@@ -1,41 +1,60 @@
-# Video Clipper Automation
+from pathlib import Path
 
-Aplikasi otomatis untuk mengubah video panjang menjadi beberapa klip yang lebih pendek, siap diproses menjadi konten untuk platform seperti TikTok, Reels, Shorts, YouTube, dan LinkedIn.
+import streamlit as st
 
-Fitur utama:
-- upload video panjang
-- segmentasi otomatis berdasarkan momen penting
-- pembuatan subtitle otomatis
-- konversi teks jadi hook, caption, dan tagar
-- pembuatan thumbnail concept
-- ekspor hasil siap publish
+from src.video_pipeline import VideoPipeline
 
-## Stack yang digunakan
-- Python
-- Streamlit
-- MoviePy
-- Whisper (opsional untuk transkripsi otomatis)
-- FFmpeg
 
-## Struktur proyek
-- `app.py` – antarmuka aplikasi
-- `src/video_pipeline.py` – pipeline utama pengolahan video
-- `requirements.txt` – dependency
-- `workspace/` – tempat hasil proses
+st.set_page_config(page_title="Video Clipper Automation", layout="wide")
 
-## Cara menjalankan
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-streamlit run app.py
-```
+st.title("🎬 Video Clipper Automation")
+st.caption("Klik, upload, dan hasilkan klip pendek siap publish dengan hook, subtitle, caption, dan tagar otomatis.")
 
-## Flow kerja
-1. Upload video panjang
-2. Sistem memotong video ke beberapa bagian yang paling menarik
-3. Auto-generate teks, subtitle, caption, tagar, dan hook
-4. Hasil disimpan di folder workspace
+with st.sidebar:
+    st.header("Pengaturan otomatis")
+    max_clips = st.slider("Jumlah klip", min_value=1, max_value=10, value=3)
+    clip_duration = st.slider("Durasi target per klip (detik)", min_value=10, max_value=120, value=30)
+    target_platform = st.selectbox("Platform target", ["TikTok", "Reels", "Shorts", "YouTube", "LinkedIn"])
 
-## Catatan
-Versi awal ini fokus pada MVP: otomatisasi proses dasar dan template konten siap pakai untuk pemasaran digital.
+uploaded_file = st.file_uploader("Upload video panjang", type=["mp4", "mov", "mkv", "avi", "webm"])
+
+if uploaded_file is not None:
+    with st.spinner("Memotong video, membuat subtitle, thumbnail, dan metadata konten..."):
+        pipeline = VideoPipeline(
+            upload_dir=Path("uploads"),
+            workspace_dir=Path("workspace"),
+            max_clips=max_clips,
+            clip_duration=clip_duration,
+            target_platform=target_platform,
+        )
+        result = pipeline.process(uploaded_file)
+
+    st.success(f"Selesai: {len(result['clips'])} klip dibuat untuk {result['platform']}.")
+
+    for clip in result["clips"]:
+        st.markdown(f"---\n### {clip['title']}\n")
+        col1, col2 = st.columns([1.5, 1])
+
+        with col1:
+            st.video(clip["path"])
+        with col2:
+            st.image(clip["thumbnail"], caption="Thumbnail preview")
+            st.write(f"Durasi: {clip['duration']} detik")
+            st.write(f"Hook: {clip['hook']}")
+            st.write(f"Tagar: {', '.join(clip['tags'])}")
+            st.code(clip["caption"], language="text")
+            st.code(clip["subtitle"], language="text")
+
+    with st.expander("Lihat metadata lengkap"):
+        st.json({k: v for k, v in result.items() if k != "clips"})
+
+    with st.expander("Lihat semua file hasil"):
+        for file in sorted(Path(result["workspace"]).rglob("*")):
+            if file.is_file():
+                st.write(file.relative_to(Path(result["workspace"])))
+else:
+    st.info("Silakan upload video panjang untuk memulai proses clipping otomatis.")
+
+st.markdown("---")
+st.caption("Versi MVP yang menghasilkan klip video nyata, subtitle, thumbnail, serta metadata siap publish.")
+
