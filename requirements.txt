@@ -1,13 +1,14 @@
 # Video Clipper Automation
 
-Aplikasi otomatis untuk memotong video panjang menjadi beberapa klip singkat siap dipublish di platform seperti TikTok, Reels, Shorts, YouTube, dan LinkedIn.
+Aplikasi otomatis untuk memotong video panjang menjadi beberapa klip singkat yang siap dipublish di platform seperti TikTok, Reels, Shorts, YouTube, dan LinkedIn.
 
 Fitur utama:
 - upload video panjang
 - pemotongan otomatis menjadi beberapa klip
+- transkripsi audio otomatis
 - pembuatan subtitle otomatis
-- pembuatan hook, caption, dan tagar
-- thumbnail preview untuk setiap klip
+- pembuatan hook, caption, dan tagar berdasarkan transkrip
+- preview thumbnail untuk setiap klip
 - export hasil ke folder workspace
 
 ## Stack
@@ -15,12 +16,17 @@ Fitur utama:
 - Streamlit
 - MoviePy
 - FFmpeg
+- OpenAI Whisper (opsional, untuk transkripsi otomatis)
+
+## Persyaratan sistem
+- Instal FFmpeg di sistem operasi Anda sebelum menjalankan aplikasi.
+- Untuk transkripsi otomatis, install `openai-whisper` dari `requirements.txt`.
 
 ## Struktur proyek
 - `app.py` – antarmuka aplikasi
 - `src/video_pipeline.py` – pipeline utama pemrosesan video
 - `uploads/` – penyimpanan file input
-- `workspace/` – hasil output video, subtitle, thumbnail, dan metadata
+- `workspace/` – hasil output video, transcript, subtitle, thumbnail, dan metadata
 
 ## Cara menjalankan
 ```bash
@@ -32,11 +38,10 @@ streamlit run app.py
 
 ## Flow kerja
 1. Upload video panjang
-2. Aplikasi membagi video menjadi beberapa bagian sesuai jumlah klip yang dipilih
-3. Setiap klip dibuat sebagai file video baru dengan subtitle dan thumbnail
-4. Metadata seperti hook, caption, dan tagar dibuat otomatis
-5. Hasil tersimpan di folder `workspace`
+2. Video dipotong menjadi beberapa klip berdasarkan durasi target dan jumlah klip
+3. Audio ditranskripsi otomatis menggunakan Whisper (jika tersedia)
+4. Setiap klip dibuat dengan subtitle, hook, caption, dan tagar berdasarkan transkrip
+5. Hasil file disimpan di folder `workspace`
 
 ## Catatan
-Versi ini adalah MVP yang fokus pada otomatisasi dasar repurposing video. Untuk skenario yang lebih canggih, dapat dikembangkan dengan transkripsi AI, deteksi momen penting berbasis audio/visual, dan integrasi model generative untuk thumbnail serta copywriting.
-
+Versi ini adalah MVP dengan transkripsi berbasis audio untuk membantu repurposing video menjadi konten short-form yang lebih siap publikasi. Pengembangan berikutnya dapat mencakup deteksi momen paling menarik secara visual/berbasis AI, thumbnail generator otomatis, dan integrasi model generative untuk copywriting yang lebih kuat.
