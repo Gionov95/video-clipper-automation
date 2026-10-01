@@ -1,77 +1,52 @@
-from pathlib import Path
+# Video Clipper Automation
 
-import streamlit as st
+Aplikasi otomatis untuk memotong video panjang menjadi beberapa klip singkat yang siap dipublish di platform seperti TikTok, Reels, Shorts, YouTube, dan LinkedIn.
 
-from src.video_pipeline import VideoPipeline
+Fitur utama:
+- upload video panjang
+- analisis otomatis momen penting dari transcript dan audio
+- pemotongan otomatis menjadi beberapa klip terbaik
+- transkripsi audio otomatis
+- pembuatan subtitle otomatis
+- pembuatan hook, caption, dan tagar berdasarkan teks penting
+- generator thumbnail multi-variant untuk setiap klip
+- riwayat proses dan export zip hasil
+- preview dan export hasil ke folder workspace
 
+## Stack
+- Python 3.11+
+- Streamlit
+- MoviePy
+- Pillow
+- FFmpeg
+- OpenAI Whisper (opsional, untuk transkripsi otomatis)
 
-st.set_page_config(page_title="Video Clipper Automation", layout="wide")
+## Persyaratan sistem
+- Instal FFmpeg di sistem operasi Anda sebelum menjalankan aplikasi.
+- Untuk transkripsi otomatis, install `openai-whisper` dari `requirements.txt`.
 
-st.title("🎬 Video Clipper Automation")
-st.caption("Upload video panjang, pilih momen terpenting, lalu hasilkan klip dengan hook, subtitle, caption, tagar, dan thumbnail siap publish.")
+## Struktur proyek
+- `app.py` – antarmuka aplikasi
+- `src/video_pipeline.py` – pipeline utama pemrosesan video, deteksi momen, thumbnail, dan copywriting
+- `uploads/` – penyimpanan file input
+- `workspace/` – hasil output video, transcript, subtitle, thumbnail, metadata, dan riwayat proses
 
-with st.sidebar:
-    st.header("Pengaturan otomatis")
-    max_clips = st.slider("Jumlah klip", min_value=1, max_value=10, value=3)
-    clip_duration = st.slider("Durasi target per klip (detik)", min_value=10, max_value=120, value=30)
-    target_platform = st.selectbox("Platform target", ["TikTok", "Reels", "Shorts", "YouTube", "LinkedIn"])
+## Cara menjalankan
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+streamlit run app.py
+```
 
-uploaded_file = st.file_uploader("Upload video panjang", type=["mp4", "mov", "mkv", "avi", "webm"])
+## Flow kerja
+1. Upload video panjang
+2. Sistem mengekstrak audio dan mentranskripsikan isi video
+3. Momen paling penting dideteksi berdasarkan kata kunci, durasi, dan energi audio
+4. Video dipotong menjadi klip terbaik sesuai jumlah yang diinginkan
+5. Setiap klip dibuat dengan subtitle, hook, caption, tagar, dan thumbnail multi-variant
+6. Hasil file disimpan di folder `workspace`
+7. Riwayat proses serta export zip dapat diakses dari dashboard aplikasi
 
-if uploaded_file is not None:
-    with st.spinner("Menganalisis momen paling kuat, membuat klip, subtitle, thumbnail, dan variasi copywriting..."):
-        pipeline = VideoPipeline(
-            upload_dir=Path("uploads"),
-            workspace_dir=Path("workspace"),
-            max_clips=max_clips,
-            clip_duration=clip_duration,
-            target_platform=target_platform,
-        )
-        result = pipeline.process(uploaded_file)
-
-    st.success(f"Selesai: {len(result['clips'])} klip paling menarik berhasil dibuat untuk {result['platform']}.")
-
-    if result.get("transcript"):
-        with st.expander("Lihat transkrip keseluruhan"):
-            st.code(result["transcript"], language="text")
-
-    if result.get("hotspot_analysis"):
-        with st.expander("Lihat analisis momen penting"):
-            st.json(result["hotspot_analysis"])
-
-    for clip in result["clips"]:
-        st.markdown(f"---\n### {clip['title']}\n")
-        col1, col2 = st.columns([1.6, 1])
-
-        with col1:
-            st.video(clip["path"])
-        with col2:
-            st.image(clip["thumbnail"], caption="Thumbnail utama")
-            st.write(f"Durasi: {clip['duration']} detik")
-            st.write(f"Skor momen: {clip['moment_score']}")
-            st.write("Hook options:")
-            for option in clip["hook_variants"]:
-                st.code(option, language="text")
-            st.write("Caption options:")
-            for option in clip["caption_variants"]:
-                st.code(option, language="text")
-            st.write(f"Tagar: {', '.join(clip['tags'])}")
-
-        st.write("Thumbnail variants:")
-        thumb_cols = st.columns(len(clip["thumbnail_variants"]))
-        for i, thumb in enumerate(clip["thumbnail_variants"]):
-            with thumb_cols[i]:
-                st.image(thumb, caption=f"Variant {i + 1}")
-
-    with st.expander("Lihat metadata lengkap"):
-        st.json({k: v for k, v in result.items() if k != "clips"})
-
-    with st.expander("Lihat semua file hasil"):
-        for file in sorted(Path(result["workspace"]).rglob("*")):
-            if file.is_file():
-                st.write(file.relative_to(Path(result["workspace"])))
-else:
-    st.info("Silakan upload video panjang untuk memulai proses clipping otomatis.")
-
-st.markdown("---")
-st.caption("Versi tahap 4: generator thumbnail dan variasi hook & caption untuk outbound konten yang lebih siap konversi.")
+## Catatan
+Versi ini adalah tahap 5 dari pengembangan, fokus pada workflow yang lebih siap dipakai: proses berulang, riwayat job, serta export hasil untuk kebutuhan publikasi atau pengiriman ke tim.

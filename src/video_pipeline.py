@@ -1,14 +1,18 @@
 from __future__ import annotations
 
+import io
 import json
 import math
 import re
 import shutil
 import uuid
+import zipfile
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Dict, List, Tuple
 
 from moviepy.editor import VideoFileClip
+from PIL import Image, ImageDraw, ImageFont, ImageOps
 
 try:
     import whisper
@@ -62,7 +66,6 @@ class VideoPipeline:
 
             for idx, (start, end) in enumerate(segments, start=1):
                 clip_path = job_dir / f"clip_{idx}.mp4"
-                thumb_path = job_dir / f"clip_{idx}_thumb.jpg"
                 subtitle_path = job_dir / f"clip_{idx}.srt"
 
                 segment = video.subclip(start, end)
@@ -76,7 +79,6 @@ class VideoPipeline:
                     logger=None,
                     progress_bar=False,
                 )
-                segment.save_frame(str(thumb_path), t=max(0.0, min(segment.duration / 2, 3.0)))
                 segment.close()
 
                 clip_transcript = self._clip_transcript_for_range(transcript, start, end)
@@ -84,6 +86,10 @@ class VideoPipeline:
                 subtitle_path.write_text(subtitle_text, encoding="utf-8")
 
                 score = self._score_segment(clip_transcript, start, end, video)
+                thumbnail_variants = self._generate_thumbnail_variants(video, start, end, job_dir, idx)
+                hook_variants = self._build_hook_variants(clip_transcript, idx)
+                caption_variants = self._build_caption_variants(clip_transcript, idx)
+
                 clip = {
                     "index": idx,
                     "title": f"Highlight {idx}",
@@ -91,13 +97,16 @@ class VideoPipeline:
                     "end": round(end, 2),
                     "duration": round(max(0.01, end - start), 2),
                     "moment_score": round(score, 2),
-                    "hook": self._build_hook_from_text(clip_transcript, idx),
-                    "caption": self._build_caption_from_text(clip_transcript, idx),
+                    "hook": hook_variants[0],
+                    "hook_variants": hook_variants,
+                    "caption": caption_variants[0],
+                    "caption_variants": caption_variants,
                     "tags": self._build_tags_from_text(clip_transcript),
                     "subtitle": subtitle_text,
                     "transcript": clip_transcript,
                     "path": str(clip_path),
-                    "thumbnail": str(thumb_path),
+                    "thumbnail": thumbnail_variants[0],
+                    "thumbnail_variants": thumbnail_variants,
                     "subtitle_path": str(subtitle_path),
                 }
                 clips.append(clip)
@@ -111,6 +120,7 @@ class VideoPipeline:
             "workspace": str(job_dir),
             "transcript": transcript.get("text", ""),
             "hotspot_analysis": hotspot_analysis,
+            "generated_at": datetime.now(timezone.utc).isoformat(),
             "clips": clips,
         }
 
@@ -126,17 +136,7 @@ class VideoPipeline:
 
         raw_segments = transcript.get("segments", [])
         if not raw_segments:
-            ideal_segment = self.clip_duration
-            target_count = max(1, min(self.max_clips, int(math.ceil(total_duration / ideal_segment))))
-            segment_length = total_duration / target_count
-            fallback: List[Tuple[float, float]] = []
-            for idx in range(target_count):
-                start = idx * segment_length
-                end = min(total_duration, (idx + 1) * segment_length)
-                if idx == target_count - 1 and end - start < 2:
-                    end = total_duration
-                fallback.append((round(start, 2), round(end, 2)))
-            return fallback, []
+            return self._fallback_segments(total_duration), []
 
         scored_segments: List[Dict[str, Any]] = []
         for seg in raw_segments:
@@ -146,12 +146,7 @@ class VideoPipeline:
             if not text or end <= start:
                 continue
             score = self._score_segment(text, start, end, video)
-            scored_segments.append({
-                "start": start,
-                "end": end,
-                "text": text,
-                "score": score,
-            })
+            scored_segments.append({"start": start, "end": end, "text": text, "score": score})
 
         if not scored_segments:
             return self._fallback_segments(total_duration), []
@@ -276,35 +271,110 @@ class VideoPipeline:
         cleaned = Path(name).name
         return "".join(ch if ch.isalnum() or ch in (".", "_", "-") else "_" for ch in cleaned)
 
-    def _build_hook_from_text(self, transcript: str, idx: int) -> str:
+    def _build_hook_variants(self, transcript: str, idx: int) -> List[str]:
         text = self._clean_text(transcript)
-        if not text:
-            platform_phrase = {
-                "TikTok": "Lihat insight paling berharga dari video ini sebelum audiens berpindah!",
-                "Reels": "Momen paling kuat dari video ini hadir dalam 1 klip singkat.",
-                "Shorts": "Ini titik penting yang bikin orang berhenti menonton.",
-                "YouTube": "Bagian paling berharga dari video ini bisa jadi penarik perhatian utama.",
-                "LinkedIn": "Insight penting yang relevan untuk audiens profesional Anda.",
-            }.get(self.target_platform, "Momen paling berharga dari video ini wajib Anda lihat.")
-            return f"Clip {idx}: {platform_phrase}"
-        preview = text[:150].strip()
-        if preview.endswith((".", "!", "?")):
-            return preview
-        return preview + "..."
+        base = text[:110].strip() if text else "Ini momen paling berharga dari video ini."
+        variants = [
+            f"{base[:90]}..." if len(base) > 90 else base,
+            f"Poin paling penting di clip {idx}: {base[:80]}",
+            f"Jangan lewatkan ini — {base[:75]}",
+        ]
+        platform_variants = {
+            "TikTok": [
+                f"Ini yang bikin orang berhenti scroll: {base[:80]}",
+                f"Momen paling mengejutkan dari video ini: {base[:80]}",
+                f"Kalau Anda skip, Anda akan kehilangan inti videonya.",
+            ],
+            "Reels": [
+                f"Momen utama dari video ini: {base[:80]}",
+                f"Satu insight penting yang harus Anda lihat.",
+                f"Bagian paling berharga dari video ini.",
+            ],
+            "Shorts": [
+                f"1 momen penting yang bikin orang menonton sampai akhir.",
+                f"Poin utama dalam 15 detik: {base[:60]}",
+                f"Inilah alasan kenapa videonya worth to watch.",
+            ],
+            "YouTube": [
+                f"Bagian paling berharga dari video ini: {base[:80]}",
+                f"Ini insight yang paling banyak ditunggu audiens.",
+                f"Poin utama yang paling berpengaruh di video ini.",
+            ],
+            "LinkedIn": [
+                f"Insight penting yang relevan untuk audiens profesional: {base[:80]}",
+                f"Kenapa ini penting untuk strategi Anda?",
+                f"Bagian paling bernilai dari pembahasan ini.",
+            ],
+        }
+        platform_list = platform_variants.get(self.target_platform, variants)
+        merged = [*platform_list, *variants]
+        deduped: List[str] = []
+        for item in merged:
+            text_item = self._clean_text(item)
+            if text_item and text_item not in deduped:
+                deduped.append(text_item)
+        return deduped[:3]
 
-    def _build_caption_from_text(self, transcript: str, idx: int) -> str:
+    def _build_caption_variants(self, transcript: str, idx: int) -> List[str]:
         text = self._clean_text(transcript)
-        if not text:
-            text = "Konten ini dibuat untuk menjelaskan inti pesan dengan cara yang cepat, jelas, dan mudah diingat."
-        summary = text[:220].strip()
+        summary = text[:240].strip() if text else "Konten ini dibuat untuk menjelaskan inti pesan dengan cara yang cepat, jelas, dan mudah diingat."
         if len(summary) < len(text):
             summary += "..."
-        return (
-            f"Clip {idx} | {self.target_platform}\n"
-            f"{summary}\n"
-            "Simpan dan bagikan ke audiens yang ingin cepat paham inti pesan.\n"
-            "#contentcreator #shortvideo #hook #videoediting #branding"
-        )
+
+        captions = [
+            f"Clip {idx} | {self.target_platform}\n{summary}\nSimpan dan bagikan untuk yang mau paham inti videonya.\n#contentcreator #shortvideo #hook #videoediting #marketing",
+            f"Clip {idx} | {self.target_platform}\n{summary}\nPoin penting dalam 1 klip singkat.\n#creator #contentstrategy #viral #reels #growth",
+            f"Clip {idx} | {self.target_platform}\n{summary}\nJangan lewatkan insight penting yang ada di sini.\n#shortvideo #branding #creator #marketing #hook",
+        ]
+        return captions
+
+    def _generate_thumbnail_variants(self, video: VideoFileClip, start: float, end: float, output_dir: Path, idx: int) -> List[str]:
+        frame_time = max(0.0, min((start + end) / 2, video.duration - 0.1))
+        frame = video.get_frame(frame_time)
+        image = Image.fromarray(frame)
+        image = ImageOps.fit(image, (1280, 720), method=Image.Resampling.LANCZOS)
+
+        palette = [
+            ("curiosity", (18, 28, 52), (244, 133, 66)),
+            ("value", (12, 52, 43), (82, 211, 165)),
+            ("urgency", (55, 15, 25), (255, 86, 108)),
+        ]
+
+        output_paths: List[str] = []
+        for name, bg, accent in palette:
+            thumb = self._build_thumbnail_image(image.copy(), name, bg, accent, idx)
+            path = output_dir / f"thumbnail_{idx}_{name}.jpg"
+            thumb.save(path, quality=90)
+            output_paths.append(str(path))
+        return output_paths
+
+    def _build_thumbnail_image(self, base_image: Image.Image, style_name: str, bg_color: tuple[int, int, int], accent_color: tuple[int, int, int], idx: int) -> Image.Image:
+        canvas = Image.new("RGB", base_image.size, bg_color)
+        canvas.paste(base_image, (0, 0))
+
+        overlay = Image.new("RGBA", canvas.size, (0, 0, 0, 0))
+        draw = ImageDraw.Draw(overlay)
+        draw.rounded_rectangle((60, 60, canvas.width - 60, canvas.height - 60), radius=28, fill=(0, 0, 0, 140))
+        draw.rounded_rectangle((80, 80, 260, 150), radius=20, fill=accent_color + (220,))
+        draw.text((100, 95), f"CLIP {idx}", fill=(255, 255, 255), font=self._get_font(36))
+        draw.text((90, 500), self._thumbnail_title(style_name), fill=(255, 255, 255), font=self._get_font(58), anchor="la")
+        draw.text((90, 590), "STOP SCROLLING", fill=(255, 255, 255), font=self._get_font(32), anchor="la")
+        canvas = Image.alpha_composite(canvas.convert("RGBA"), overlay).convert("RGB")
+        return canvas
+
+    def _thumbnail_title(self, style_name: str) -> str:
+        mapping = {
+            "curiosity": "WHY THIS MATTERS",
+            "value": "MOST VALUABLE PART",
+            "urgency": "DON'T MISS THIS",
+        }
+        return mapping.get(style_name, "KEY MOMENT")
+
+    def _get_font(self, size: int) -> ImageFont.FreeTypeFont:
+        try:
+            return ImageFont.truetype("DejaVuSans-Bold.ttf", size=size)
+        except Exception:
+            return ImageFont.load_default()
 
     def _build_tags_from_text(self, transcript: str) -> List[str]:
         cleaned = self._clean_text(transcript)
@@ -339,8 +409,7 @@ class VideoPipeline:
     def _clean_text(self, text: str) -> str:
         if not text:
             return ""
-        text = re.sub(r"\s+", " ", text).strip()
-        return text
+        return re.sub(r"\s+", " ", text).strip()
 
     def _format_timestamp(self, seconds: float) -> str:
         total_ms = int(round(seconds * 1000))
@@ -353,11 +422,108 @@ class VideoPipeline:
 __all__ = ["VideoPipeline"]
 
 
-"""Quick usage example:
-from pathlib import Path
-from src.video_pipeline import VideoPipeline
-pipeline = VideoPipeline(upload_dir=Path('uploads'), workspace_dir=Path('workspace'))
-"""
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
 
 
 
