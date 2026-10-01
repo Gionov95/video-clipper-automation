@@ -1,82 +1,28 @@
-# Video Clipper Automation
+from __future__ import annotations
 
-Aplikasi otomatis untuk memotong video panjang menjadi beberapa klip singkat yang siap dipublish di platform seperti TikTok, Reels, Shorts, YouTube, dan LinkedIn.
+import hashlib
+from typing import Any, Dict
 
-Fitur utama:
-- upload video panjang
-- analisis otomatis momen penting dari transcript dan audio
-- pemotongan otomatis menjadi beberapa klip terbaik
-- transkripsi audio otomatis
-- pembuatan subtitle otomatis
-- pembuatan hook, caption, dan tagar berdasarkan teks penting
-- generator thumbnail multi-variant untuk setiap klip
-- riwayat proses dan export zip hasil
-- API backend FastAPI untuk workflow otomatisasi dan integrasi eksternal
-- preview dan export hasil ke folder workspace
+from db import create_user, get_user_by_username
 
-## Stack
-- Python 3.11+
-- Streamlit
-- FastAPI
-- MoviePy
-- Pillow
-- FFmpeg
-- OpenAI Whisper (opsional, untuk transkripsi otomatis)
 
-## Persyaratan sistem
-- Instal FFmpeg di sistem operasi Anda sebelum menjalankan aplikasi.
-- Untuk transkripsi otomatis, install `openai-whisper` dari `requirements.txt`.
+def hash_password(password: str) -> str:
+    return hashlib.sha256(password.encode("utf-8")).hexdigest()
 
-## Struktur proyek
-- `app.py` – antarmuka aplikasi Streamlit
-- `api.py` – backend API FastAPI untuk proses otomatisasi dan integrasi
-- `src/video_pipeline.py` – pipeline utama pemrosesan video, deteksi momen, thumbnail, dan copywriting
-- `uploads/` – penyimpanan file input
-- `workspace/` – hasil output video, transcript, subtitle, thumbnail, metadata, dan riwayat proses
 
-## Cara menjalankan
+def register_user(username: str, password: str) -> Dict[str, Any]:
+    if not username or not password:
+        raise ValueError("Username dan password wajib diisi")
+    if get_user_by_username(username):
+        raise ValueError("Username sudah dipakai")
+    user_id = create_user(username, hash_password(password))
+    return {"id": user_id, "username": username}
 
-Streamlit frontend:
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-streamlit run app.py
-```
 
-API backend:
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
-uvicorn api:app --host 0.0.0.0 --port 8000
-```
-
-## Endpoint API
-
-- `GET /health` – cek status service
-- `POST /process` – upload video dan dapatkan hasil processing
-- `GET /jobs` – daftar history pekerjaan
-- `GET /jobs/{job_id}` – detail job berdasarkan ID
-- `GET /jobs/{job_id}/download` – download hasil pekerjaan dalam format zip
-
-Contoh request:
-```bash
-curl -X POST "http://localhost:8000/process" \
-  -F "file=@video.mp4" \
-  -F "max_clips=3" \
-  -F "clip_duration=30" \
-  -F "target_platform=TikTok"
-```
-
-## Flow kerja
-1. Upload video panjang
-2. Sistem mengekstrak audio dan mentranskripsikan isi video
-3. Momen paling penting dideteksi berdasarkan kata kunci, durasi, dan energi audio
-4. Video dipotong menjadi klip terbaik sesuai jumlah yang diinginkan
-5. Setiap klip dibuat dengan subtitle, hook, caption, tagar, dan thumbnail multi-variant
-6. Hasil file disimpan di folder `workspace`
-7. Riwayat proses serta export zip dapat diakses dari dashboard atau API
-
-## Catatan
-Versi ini adalah tahap 6 dari pengembangan, fokus pada workflow otomatisasi yang lebih siap dipakai: frontend UI untuk interaksi manusia, API backend untuk integrasi eksternal, dan sistem kerja yang dapat dipadukan dengan automasi atau produk lain.
+def authenticate_user(username: str, password: str) -> Dict[str, Any] | None:
+    user = get_user_by_username(username)
+    if not user:
+        return None
+    if user["password_hash"] != hash_password(password):
+        return None
+    return {"id": user["id"], "username": user["username"]}
